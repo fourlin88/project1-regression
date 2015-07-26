@@ -1,0 +1,142 @@
+---
+title: Report - Quantified Self Movement Data Analysis
+author: "fourlin88"
+output:
+  html_document
+---
+
+## Background  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data
+about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a
+group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in
+their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a
+particular activity they do, but they rarely quantify how well they do it. 
+
+In this project, your goal will be to use data from
+accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts
+correctly and incorrectly in 5 different ways. More information is available from the website
+here: http://groupware.les.inf.puc-rio.br/har (http://groupware.les.inf.puc-rio.br/har) (see the section on the Weight
+Lifting Exercise Dataset).
+
+
+## Data
+
+The training data for this project are available here:
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: [Human Activity Recognition](http://groupware.les.inf.puc-rio.br/har) programme at [Groupware](http://groupware.les.inf.puc-rio.br/).
+
+We start by loading the data.
+
+## Data Preprocessing  
+```{r, cache = T}
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(randomForest)
+```
+#### If the Data has not yet been downloaded, here is the code that will download the Data
+```{r, cache = T}
+train.url <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+test.url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+train.file <- "./data/pml-training.csv"
+test.file  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists(train.file)) {
+  download.file(train.url, destfile=train.file, method="curl")
+}
+if (!file.exists(test.file)) {
+  download.file(test.url, destfile=test.file, method="curl")
+}
+```  
+### Read the Data
+Load the data into data freames.
+
+```{r, cache = T}
+train.raw <- read.csv("./data/pml-training.csv")
+test.raw <- read.csv("./data/pml-testing.csv")
+
+```
+The training data set contains 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables. 
+
+We will put the outcome in the "classe" variable. 
+
+### Clean the data
+
+Firstly, fte original data is cleaned from columns with NA values. 
+
+```{r, cache = T}
+train.raw <- train.raw[, colSums(is.na(train.raw)) == 0] 
+test.raw <- test.raw[, colSums(is.na(test.raw)) == 0] 
+```  
+Secondly, some columns that do not contribute much to the accelerometer measurements are removed. 
+
+```{r, cache = T}
+classe <- train.raw$classe
+trainRemove <- grepl("^X|timestamp|window", names(train.raw))
+train.raw <- train.raw[, !trainRemove]
+train.clean <- train.raw[, sapply(train.raw, is.numeric)]
+train.clean$classe <- classe
+test.remove <- grepl("^X|timestamp|window", names(test.raw))
+test.raw <- test.raw[, !test.remove]
+test.clean <- test.raw[, sapply(test.raw, is.numeric)]
+```
+Now, the cleaned training data set contains 19622 observations and 53 variables, while the testing data set contains 20 observations and 53 variables. The "classe" variable is still in the cleaned training set.
+
+### Slice the data
+Then, we can split the cleaned training set into a pure training data set (70%) and a validation data set (30%). We will use the validation data set to conduct cross validation in future steps.  
+```{r, cache = T}
+set.seed(22519) # For reproducibile purpose
+inTrain <- createDataPartition(train.clean$classe, p=0.70, list=F)
+train.data <- train.clean[inTrain, ]
+test.data <- train.clean[-inTrain, ]
+```
+
+## Data Modeling
+We use **Random Forest** algorithm because it automatically selects important variables and is robust to correlated covariates & outliers in general. We will use **5-fold cross validation** when applying the algorithm.  
+```{r, cache = T}
+controlRf <- trainControl(method="cv", 5)
+modelRf <- train(classe ~ ., data=train.data, method="rf", trControl=controlRf, ntree=250)
+modelRf
+```
+
+####We now compare the results from the predition with the actual data.
+```{r, cache = T}
+predictRf <- predict(modelRf, test.data)
+confusionMatrix(test.data$classe, predictRf)
+```
+```{r, cache = T}
+accuracy <- postResample(predictRf, test.data$classe)
+accuracy
+oose <- 1 - as.numeric(confusionMatrix(test.data$classe, predictRf)$overall[1])
+oose
+```
+So, the estimated accuracy of the model is 99.42% and the estimated out-of-sample error is 0.58%.
+
+## Predicting for Test Data Set
+Now, we apply the model to the testing data set downloaded from the data source. The `problem_id` column is removed. 
+```{r, cache = T}
+result <- predict(modelRf, test.clean[, -length(names(test.clean))])
+result
+```
+
+### Write the results to individual files for submission
+```{r}
+answers <- result
+pml_write_files <- function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_results/problem_id_",i,".txt")
+    write.table(x[i], file=filename, quote=FALSE,
+                row.names=FALSE, col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```  
+
